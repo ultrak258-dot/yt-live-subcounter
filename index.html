@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>YouTube Live Subscriber Stats</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #121212;
+      color: #fff;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    input, button {
+      padding: 10px;
+      font-size: 1rem;
+      border-radius: 6px;
+      margin: 5px;
+    }
+
+    button {
+      background-color: #1db954;
+      border: none;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #168f41;
+    }
+
+    .channel-info {
+      margin-top: 1rem;
+      padding: 1rem;
+      background-color: #1e1e1e;
+      border-radius: 10px;
+      display: inline-block;
+    }
+
+    .channel-info img {
+      border-radius: 50%;
+      width: 80px;
+      margin-bottom: 0.5rem;
+    }
+
+    canvas {
+      max-width: 600px;
+      margin-top: 2rem;
+    }
+
+    .footer {
+      margin-top: 2rem;
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📈 YouTube Live Subscriber Tracker</h1>
+  <input type="text" id="channelInput" placeholder="Enter @username, link, or ID" />
+  <button onclick="startTracking()">Track</button>
+
+  <div id="channelData" class="channel-info" style="display:none;">
+    <img id="channelLogo" />
+    <h2 id="channelTitle"></h2>
+    <p id="statsText"></p>
+  </div>
+
+  <canvas id="subsChart"></canvas>
+
+  <div class="footer">Made by @Ultra using YouTube Data API + Chart.js</div>
+
+  <script>
+    const API_KEY = "AIzaSyCSTq0vBvCW79mEmVFljhmguO1OduTimIc";
+    let chart, interval, subsData = [], timeLabels = [];
+
+    async function getChannelID(input) {
+      input = input.trim();
+
+      // Handle @username
+      if (input.startsWith('@')) {
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&q=${encodeURIComponent(input)}&key=${API_KEY}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.items.length > 0) return data.items[0].snippet.channelId;
+        throw new Error("Username not found");
+      }
+
+      // Handle full YouTube URLs
+      if (input.includes("youtube.com")) {
+        let urlObj = new URL(input);
+        const path = urlObj.pathname;
+
+        // /channel/UC...
+        if (path.includes("/channel/")) {
+          return path.split("/channel/")[1].split("/")[0];
+        }
+
+        // /@username or /c/customname
+        let searchQuery = path.replace(/^\/+/, "").split("/")[0];
+        if (searchQuery) {
+          const searchAPI = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&q=${searchQuery}&key=${API_KEY}`;
+          const res = await fetch(searchAPI);
+          const data = await res.json();
+          if (data.items.length > 0) return data.items[0].snippet.channelId;
+        }
+
+        throw new Error("Invalid YouTube link.");
+      }
+
+      // Assume it's already a channel ID (UC...)
+      if (input.startsWith("UC")) return input;
+
+      throw new Error("Invalid input format");
+    }
+
+    async function fetchChannelStats(channelId) {
+      const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=${channelId}&key=${API_KEY}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.items && data.items.length > 0) {
+        const item = data.items[0];
+        const stats = item.statistics;
+        const snippet = item.snippet;
+        return {
+          title: snippet.title,
+          logo: snippet.thumbnails.default.url,
+          views: stats.viewCount,
+          videos: stats.videoCount,
+          subs: stats.subscriberCount
+        };
+      } else {
+        throw new Error("Channel not found");
+      }
+    }
+
+    async function startTracking() {
+      const userInput = document.getElementById("channelInput").value;
+      if (!userInput) return alert("Please enter something!");
+
+      subsData = [];
+      timeLabels = [];
+      clearInterval(interval);
+
+      try {
+        const channelId = await getChannelID(userInput);
+        await updateUI(channelId);
+        interval = setInterval(() => updateUI(channelId), 10000);
+      } catch (err) {
+        alert("Error: " + err.message);
+      }
+    }
+
+    async function updateUI(channelId) {
+      try {
+        const data = await fetchChannelStats(channelId);
+
+        document.getElementById("channelData").style.display = "block";
+        document.getElementById("channelTitle").textContent = data.title;
+        document.getElementById("channelLogo").src = data.logo;
+        document.getElementById("statsText").textContent =
+          `👥 Subs: ${data.subs} | 📺 Videos: ${data.videos} | 🔁 Views: ${data.views}`;
+
+        const time = new Date().toLocaleTimeString();
+        timeLabels.push(time);
+        subsData.push(data.subs);
+        if (subsData.length > 20) {
+          timeLabels.shift();
+          subsData.shift();
+        }
+
+        if (!chart) {
+          const ctx = document.getElementById('subsChart').getContext('2d');
+          chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: timeLabels,
+              datasets: [{
+                label: 'Live Subscribers',
+                data: subsData,
+                fill: true,
+                borderColor: '#1db954',
+                backgroundColor: 'rgba(29, 185, 84, 0.2)',
+                tension: 0.4
+              }]
+            },
+            options: {
+              responsive: true,
+              scales: {
+                y: {
+                  beginAtZero: false
+                }
+              }
+            }
+          });
+        } else {
+          chart.data.labels = timeLabels;
+          chart.data.datasets[0].data = subsData;
+          chart.update();
+        }
+
+      } catch (err) {
+        console.error(err);
+        alert("Error fetching channel data.");
+      }
+    }
+  </script>
+
+</body>
+</html>
